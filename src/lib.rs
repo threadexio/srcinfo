@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::num::ParseIntError;
 use std::str::FromStr;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ErrorKind {
 	InvalidSyntax,
 	InvalidNumeral(ParseIntError),
@@ -12,17 +12,45 @@ pub enum ErrorKind {
 	Empty,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Error {
-	pub kind: ErrorKind,
-	pub line: u32,
+	kind: ErrorKind,
+	line: u32,
+}
+
+impl Error {
+	pub fn kind(&self) -> &ErrorKind {
+		&self.kind
+	}
+
+	pub fn line(&self) -> u32 {
+		self.line
+	}
 }
 
 impl std::error::Error for Error {}
 
 impl std::fmt::Display for Error {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{:?} at line {}", self.kind, self.line)
+		use ErrorKind::*;
+
+		write!(
+			f,
+			"{}",
+			match self.kind() {
+				InvalidSyntax => format!("invalid syntax at line {}", self.line()),
+				InvalidNumeral(e) =>
+					format!("invalid numeral found ({}) at line {}", e, self.line()),
+				MissingSection => format!("expected section at line {}", self.line()),
+				Empty => format!("no data was given"),
+			}
+		)
+	}
+}
+
+impl PartialEq<ErrorKind> for Error {
+	fn eq(&self, other: &ErrorKind) -> bool {
+		&self.kind == other
 	}
 }
 
@@ -59,7 +87,7 @@ impl FromStr for Arch {
 	}
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Section {
 	pub pkgver: Option<String>,
 	pub pkgrel: Option<String>,
@@ -98,7 +126,7 @@ pub struct Section {
 	pub sha512sums: Vec<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct SRCINFO {
 	pub pkgbase: HashMap<String, Section>,
 
@@ -151,7 +179,7 @@ impl SRCINFO {
 			_ => {
 				if k.starts_with("source_") {
 					s.source
-						.entry(Arch::from_str(&k[7..]).unwrap())
+						.entry(Arch::from_str(&k[7..]).unwrap()) // this unwrap wont ever actually fail, because the behavior of
 						.or_default()
 						.push(String::from(v));
 				}
@@ -252,8 +280,9 @@ impl SRCINFO {
 
 	/// Parse data from a buffered reader object.
 	///
-	/// - Example:
-	/// ```rust
+	/// # Example
+	///
+	/// ```
 	/// use std::io::{self, BufReader};
 	/// use std::fs::File;
 	///
@@ -279,8 +308,9 @@ impl SRCINFO {
 
 	/// Parse data from a file.
 	///
-	/// - Example:
-	/// ```rust
+	/// # Example
+	///
+	/// ```
 	/// use std::fs::File;
 	/// use std::io;
 	///
@@ -298,8 +328,9 @@ impl SRCINFO {
 
 	/// Parse data from a string in memory.
 	///
-	/// - Example:
-	/// ```rust
+	/// # Example
+	///
+	/// ```
 	/// use srcinfo::SRCINFO;
 	///
 	/// fn main() {
@@ -317,5 +348,45 @@ impl FromStr for SRCINFO {
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		Self::from_str(s)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn test_error_invalid_syntax() {
+		let res = SRCINFO::from_str("pkgbase = test\npkgdesc - test description");
+
+		assert!(res.is_err());
+		assert_eq!(res.unwrap_err(), ErrorKind::InvalidSyntax);
+	}
+
+	#[test]
+	fn test_error_invalid_numeral() {
+		let res = SRCINFO::from_str("pkgbase = test\nepoch = 2423a");
+
+		assert!(res.is_err());
+		assert!(matches!(
+			res.unwrap_err().kind,
+			ErrorKind::InvalidNumeral(_)
+		));
+	}
+
+	#[test]
+	fn test_error_missing_section() {
+		let res = SRCINFO::from_str("\npkgdesc = test description");
+
+		assert!(res.is_err());
+		assert_eq!(res.unwrap_err(), ErrorKind::MissingSection);
+	}
+
+	#[test]
+	fn test_error_empty() {
+		let res = SRCINFO::from_str("");
+
+		assert!(res.is_err());
+		assert_eq!(res.unwrap_err(), ErrorKind::Empty);
 	}
 }
